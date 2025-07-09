@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package common;
+
+option go_package = "ig-wva/gen/go/common";
+
+// Represents the configuration of a worker node type.
+message WorkerType {
+  // Unique identifier for this worker type configuration.
+  // Can be auto-generated (e.g., hash of fields) or user-defined.
+  string id = 1;
+  string accelerator_type = 2;    // e.g., "L4", "A100", "H100"
+  int32 accelerator_count = 3;    // e.g., 1, 2, 4
+  string model_name = 4;          // e.g., "gemma-7b", "llama2-13b"
+  string model_server_type = 5;   // e.g., "TGI", "VLLM", "SAX"
+  string model_server_image = 6;  // Specific container image URI/tag
+}
+
+// Represents a class of requests with specific characteristics and
+// requirements.
+message RequestType {
+  // Unique identifier for this request type.
+  // Can be auto-generated (e.g., hash of fields) or user-defined.
+  string id = 1;
+  string input_size_bucket = 2;   // e.g., "S", "M", "L" (maps to token ranges)
+  string output_size_bucket = 3;  // e.g., "S", "M", "L" (maps to token ranges)
+  // Target average Time Per Output Token latency Service Level Objective in
+  // milliseconds.
+  float latency_slo_tpot_ms = 4;
+}

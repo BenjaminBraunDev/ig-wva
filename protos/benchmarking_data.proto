@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package benchmarking_data;
+
+option go_package = "ig-wva/gen/go/benchmarking_data";
+
+// Represents a single data point from the inference benchmarking results.
+// These are typically aggregated/averaged across many individual requests
+// matching the filter dimensions.
+message BenchmarkingDataPoint {
+  // --- Filter Dimensions ---
+  string input_size_bucket = 1;
+  string output_size_bucket = 2;
+  string accelerator_type = 3;
+  int32 accelerator_count = 4;
+  string model_name = 5;
+  string model_server_type = 6;
+  string model_server_image = 7;
+
+  // --- Measured Values ---
+  // The request rate (requests/second) at which the latency was measured.
+  float measured_request_rate_rps = 8;
+  // The resulting average Time Per Output Token latency (milliseconds) observed
+  // at the measured_request_rate_rps.
+  float measured_latency_tpot_ms = 9;
+}

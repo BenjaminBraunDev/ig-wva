@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package request_distribution;
+
+option go_package = "ig-wva/gen/go/request_distribution";
+
+// Represents a type of request, characterized by token bucket sizes and SLO.
+message RequestType {
+  string id = 1;                  // e.g., req_in_4_7_out_16_31
+  string input_size_bucket = 2;   // e.g., "4-7"
+  string output_size_bucket = 3;  // e.g., "16-31"
+  float latency_slo_tpot_ms = 4;  // Latency SLO in milliseconds
+}
+
+// Represents an entry in the rate distribution.
+message RateDistributionEntry {
+  string request_type_id = 1;  // Corresponds to RequestType.id
+  float rate = 2;              // Requests per second for this type
+}
+
+// Represents a single dataset configuration for processing.
+message DatasetRequest {
+  string dataset_name = 1;    // Name of the dataset on Hugging Face
+  string tokenizer_name = 2;  // Tokenizer to use
+  string input_column = 3;    // Column name for input/prompt text
+  string output_column = 4;   // Column name for output/response text
+  float total_request_rate = 5;  // Total request rate to distribute for this dataset
+  float latency_slo_tpot_ms = 6;  // Latency SLO for generated request types
+  optional string dataset_config = 7;     // Specific dataset configuration
+  optional string input_text_prefix = 8;  // Optional text to prepend to inputs
+  optional int32 max_samples = 9;         // Max samples to process
+}
+
+// Request to update the dataset configuration and recalculate distribution
+// from one or more datasets.
+message UpdateDatasetAndRatesRequest {
+  repeated DatasetRequest dataset_requests = 1;
+}
+
+// Response for UpdateDatasetAndRates, could be empty or include status.
+message UpdateDatasetAndRatesResponse {
+  string message = 1;  // e.g., "Dataset and rates updated successfully"
+}
+
+// Request to get the current request distribution.
+message GetCurrentDistributionRequest {
+  // Empty for now, could include filters in the future.
+}
+
+// Response containing the current request types and their distribution.
+message GetCurrentDistributionResponse {
+  repeated RequestType request_types = 1;
+  repeated RateDistributionEntry rate_distribution = 2;
+  repeated DatasetRequest source_dataset_requests = 3;  // The requests that generated this distribution
+}
+
+// The gRPC service definition.
+service RequestDistributionGenerator {
+  // Updates the reference dataset and total rate, then recalculates the
+  // distribution.
+  rpc UpdateDatasetAndRates(UpdateDatasetAndRatesRequest)
+      returns (UpdateDatasetAndRatesResponse);
+
+  // Retrieves the currently loaded request types and rate distribution.
+  rpc GetCurrentDistribution(GetCurrentDistributionRequest)
+      returns (GetCurrentDistributionResponse);
+}
