@@ -1,4 +1,5 @@
 .venv
 .vscode
-bin
-gen
+/bin
+/gen
+__pycache__
