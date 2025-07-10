@@ -1,5 +1,7 @@
-# mock_generators.py
 """Generates mock offline profiling data and request rate distributions.
+This is used to simulate the ILP solver's input data for testing purposes,
+acting as a stand-in for the GO services. It does not interact with the
+binaries or make any network calls.
 
 Models throughput as Requests Per Second (RPS), where request size and SLO
 significantly impact processing time and achievable rate.
@@ -20,7 +22,7 @@ ProfileData = Dict[
 DistributionData = Dict[str, float]  # req_type_id -> requests_per_second (RPS)
 
 # ==============================================================================
-# Centralized Hyperparameters for Mock Data Generation
+# Hyperparameters for Mock Data Generation
 # ==============================================================================
 
 MOCK_GENERATOR_CONFIG = {
@@ -278,7 +280,7 @@ def generate_mock_distribution(
 
   total_weight = sum(weights)
 
-  # --- Normalize weights and distribute total_rate ONLY among active types ---
+  # --- Normalize weights and distribute total_rate among active types ---
   actual_total_rate = 0.0
   min_rate = config['distribution_min_rate']
 

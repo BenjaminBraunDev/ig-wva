@@ -219,6 +219,3 @@ func TestGenerateProfile_InvalidInput(t *testing.T) {
 		})
 	}
 }
-
-// Note: The original tests for identical latencies and multiple points have been omitted for brevity,
-// as they follow the same refactoring pattern. They would be updated similarly to the tests above.
