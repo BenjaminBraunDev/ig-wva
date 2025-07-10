@@ -57,26 +57,30 @@ func TestGetPowerOfTwoBucket(t *testing.T) {
 
 func TestUpdateDatasetAndRates_Success(t *testing.T) {
 	h := NewCoreLogicHandler()
+	h.pythonScriptPath = "../../process_dataset.py"
 	ctx := context.Background()
 
 	// Helper variable to get a pointer for the optional field.
 	maxSamples := int32(3)
+	config := "mrpc"
 	req := &rd_go_proto.UpdateDatasetAndRatesRequest{
 		DatasetRequests: []*rd_go_proto.DatasetRequest{
 			{
-				DatasetName:      "test-dataset-1",
-				TokenizerName:    "test-tokenizer-1",
-				InputColumn:      "input-1",
-				OutputColumn:     "output-1",
+				DatasetName:      "glue",
+				DatasetConfig:    &config,
+				TokenizerName:    "bert-base-uncased",
+				InputColumn:      "sentence1",
+				OutputColumn:     "sentence2",
 				TotalRequestRate: 60.0,
 				LatencySloTpotMs: 50.0,
 				MaxSamples:       &maxSamples,
 			},
 			{
-				DatasetName:      "test-dataset-2",
-				TokenizerName:    "test-tokenizer-2",
-				InputColumn:      "input-2",
-				OutputColumn:     "output-2",
+				DatasetName:      "glue",
+				DatasetConfig:    &config,
+				TokenizerName:    "bert-base-uncased",
+				InputColumn:      "sentence1",
+				OutputColumn:     "sentence2",
 				TotalRequestRate: 40.0,
 				LatencySloTpotMs: 50.0,
 				MaxSamples:       &maxSamples,
@@ -103,18 +107,21 @@ func TestUpdateDatasetAndRates_Success(t *testing.T) {
 
 func TestGetCurrentDistribution_Success(t *testing.T) {
 	h := NewCoreLogicHandler()
+	h.pythonScriptPath = "../../process_dataset.py"
 	ctx := context.Background()
 
 	// Helper variable for the optional field.
 	maxSamples := int32(2)
+	config := "mrpc"
 	// First, load some data
 	updateReq := &rd_go_proto.UpdateDatasetAndRatesRequest{
 		DatasetRequests: []*rd_go_proto.DatasetRequest{
 			{
-				DatasetName:      "main-dataset-1",
-				TokenizerName:    "main-tokenizer-1",
-				InputColumn:      "in_col-1",
-				OutputColumn:     "out_col-1",
+				DatasetName:      "glue",
+				DatasetConfig:    &config,
+				TokenizerName:    "bert-base-uncased",
+				InputColumn:      "sentence1",
+				OutputColumn:     "sentence2",
 				TotalRequestRate: 150.0,
 				LatencySloTpotMs: 75.0,
 				MaxSamples:       &maxSamples,

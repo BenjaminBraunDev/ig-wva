@@ -1,25 +1,22 @@
 # Performance Profile Generator Service
 
-This directory contains the Go implementation of the Performance Profile Generator gRPC service.
+This directory contains the Performance Profile Generator gRPC service.
 
-This service takes a workload definition (WorkerTypes and RequestTypes) and generates a performance profile based on benchmarking data stored in Spanner or mock data. The profile indicates the maximum sustainable throughput (requests/second) for each (WorkerType, RequestType) combination, respecting latency SLOs.
+This service takes a workload definition (WorkerTypes and RequestTypes) and generates a performance profile based on benchmarking data stored in a GCS bucket or mock data. The profile indicates the maximum sustainable throughput (requests/second) for each (WorkerType, RequestType) combination, respecting latency SLOs.
 
 ## Building and Testing
 
-This service uses Blaze for building and testing.
+**1. Generate Protobuf Code:**
 
-**1. (Optional) Generate Protobuf Code:**
-
-The Go code for the protobuf messages and gRPC service is generated automatically when building other targets that depend on it (like the binary or tests). You can explicitly generate the message code using:
+The Go code for the protobuf messages and gRPC service is generated to the `gen/go` directory in the root of the project:
 
 ```shell
-blaze build ig-wva/performance_profiler:profiler_service_go_proto
-```
-
-And the gRPC service code using:
-
-```shell
-blaze build ig-wva/performance_profiler:profiler_service_go_grpc
+protoc --proto_path=protos \
+--go_out=. \
+--go_opt=module=ig-wva \
+--go-grpc_out=. \
+--go-grpc_opt=module=ig-wva \
+$(find protos -name "*.proto")
 ```
 
 **2. Run Unit Tests:**
@@ -27,7 +24,8 @@ blaze build ig-wva/performance_profiler:profiler_service_go_grpc
 Unit tests for the core profiler logic and the gRPC server layer are available. Run them using:
 
 ```shell
-blaze test ig-wva/performance_profiler/internal/profiler:profiler_test ig-wva/performance_profiler/internal/server:server_test
+go test ./performance_profiler/internal/profiler
+go test ./performance_profiler/internal/server
 ```
 
 **3. Build the Go Binary:**
@@ -38,22 +36,7 @@ Compile the gRPC server into a static binary:
 go build -o bin/performance_profiler ./performance_profiler/cmd/server
 ```
 
-This will place the executable at `blaze-bin/experimental/users/benjaminbraun/gateway_autoscaling/performance_profiler/cmd/server/main`.
-
-## Docker Image
-
-A `Dockerfile` is provided to package the service binary into a minimal container image. (Assuming `Dockerfile` is in `experimental/users/benjaminbraun/gateway_autoscaling/performance_profiler/`)
-
-**1. Build the Docker Image:**
-
-Ensure you have built the Go binary first (see step 3 above). Then, from the `google3` root directory, run:
-
-```shell
-# Make sure the blaze binary exists first!
-docker build -t profiler-service -f experimental/users/benjaminbraun/gateway_autoscaling/performance_profiler/Dockerfile .
-```
-
-*(Note: Adjust the `-t profiler-service` tag as needed. The build context `.` is the google3 root, allowing the `COPY` command in the Dockerfile to find the `blaze-bin` output, specifically `blaze-bin/experimental/users/benjaminbraun/gateway_autoscaling/performance_profiler/cmd/server/main`.)*
+This will place the executable at `bin` in project root.
 
 ## Running the Service
 
@@ -64,82 +47,32 @@ You can run the compiled binary directly, providing necessary flags:
 To run with mock data (useful for local testing without Spanner):
 
 ```shell
-# From google3 root:
 ./bin/performance_profiler \
   --port=8080 \
   --use_mock_data
 ```
 
-To connect to Spanner:
-
-```shell
-# From google3 root:
-./bin/performance_profiler \
-  --port=8080 \
-  --spanner_db="projects/YOUR_PROJECT/instances/YOUR_INSTANCE/databases/YOUR_DATABASE"
-```
-
 To run with data from a CSV file in GCS:
 
 ```shell
-# From google3 root:
 ./bin/performance_profiler \
   --port=8080 \
   --gcs_csv_bucket="YOUR_GCS_BUCKET_NAME" \
   --gcs_csv_object="path/to/your/performance_data.csv"
 ```
 
-For Spanner and GCS, replace placeholders with your actual Spanner database details.
+## Verification With Mock Data
 
-**2. Running Locally (Docker):**
-
-Run the container image built previously.
-
-To connect to Spanner:
-
-```shell
-docker run -p 8080:8080 --rm \
-  profiler-service \
-  --port=8080 \
-  --spanner_db="projects/YOUR_PROJECT/instances/YOUR_INSTANCE/databases/YOUR_DATABASE"
-```
-
-To run the Docker container with mock data:
-
-```shell
-docker run -p 8080:8080 --rm \
-  profiler-service \
-  --port=8080 \
-  --use_mock_data
-```
-
-*(Note: When connecting to Spanner, this assumes the Docker host can authenticate. You might need to mount credentials or configure Application Default Credentials (ADC) for the Docker environment.)*
-
-**3. Running on GKE:**
-
-Deploy the container image to a GKE cluster. You will need to create Kubernetes deployment and service manifests. Ensure the GKE nodes/pods have appropriate service accounts and permissions to access the specified Spanner database if not using mock data. Pass the necessary flags (e.g., `--spanner_db` or `--use_mock_data`) via the deployment's `args`.
-
-## Authentication
-
-When connecting to Spanner, the service uses the standard Google Cloud Go client libraries, which typically rely on Application Default Credentials (ADC) for authentication. Ensure the environment where the service runs (local machine, Docker container, GKE pod) has valid credentials configured if you are not using the `--use_mock_data` flag.
-
-## Verification
-
-Once the server is running with mock data (either directly or via Docker), you can use `grpcurl` to send requests and verify its functionality. If you don't have `grpcurl`, you can usually install it via your system's package manager (e.g., `sudo apt-get install grpcurl` on Debian/Ubuntu, `brew install grpcurl` on macOS).
+Once the server is running, you can use `grpcurl` to send requests and verify its functionality. If you don't have `grpcurl`, you can usually install it via your system's package manager (e.g., `sudo apt-get install grpcurl` on Debian/Ubuntu, `brew install grpcurl` on macOS).
 
 **1. Start the Server with Mock Data:**
 
 Ensure the server is running. For example, directly:
 
 ```shell
-# From google3 root:
-./blaze-bin/experimental/users/benjaminbraun/gateway_autoscaling/performance_profiler/cmd/server/main --port=8080 --use_mock_data
+./bin/performance_profiler --port=8080 --use_mock_data
 ```
-Or using Docker:
 
-```shell
-docker run -p 8080:8080 --rm profiler-service --port=8080 --use_mock_data
-```
 The server should output: `Server listening at [::]:8080`.
 
 **2. Check Health Status:**
@@ -197,7 +130,7 @@ grpcurl -plaintext -d '{
   }
 }' \
 localhost:8080 \
-experimental.users.benjaminbraun.gateway_autoscaling.performance_profiler.PerformanceProfileGenerator/GenerateProfile
+profiler_service.PerformanceProfileGenerator/GenerateProfile
 ```
 Expected Output:
 
@@ -234,8 +167,7 @@ Expected Output:
 Run with data from a CSV file in GCS:
 
 ```shell
-# From google3 root:
-./blaze-bin/experimental/users/benjaminbraun/gateway_autoscaling/performance_profiler/cmd/server/main \
+./bin/performance_profiler \
   --port=8080 \
   --gcs_csv_bucket="YOUR_GCS_BUCKET_NAME" \
   --gcs_csv_object="path/to/your/performance_data.csv"
@@ -317,7 +249,7 @@ grpcurl -plaintext -d '{
 }
 }' \
 localhost:8080 \
-experimental.users.benjaminbraun.gateway_autoscaling.performance_profiler.PerformanceProfileGenerator/GenerateProfile
+profiler_service.PerformanceProfileGenerator/GenerateProfile
 ```
 
 Output will vary based on the benchmarking data used.

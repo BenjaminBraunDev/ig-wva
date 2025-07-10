@@ -1,4 +1,3 @@
-# main.py
 """Main script to run the static Phase 1 simulation.
 
 Defines mock inputs, calls generators, runs the ILP solver, and prints results.
