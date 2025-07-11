@@ -52,6 +52,14 @@ To run with mock data (useful for local testing without Spanner):
   --use_mock_data
 ```
 
+To run with data from a local CSV file:
+
+```shell
+./bin/performance_profiler \
+  --port=8080 \
+  --csv_file_path="path/to/your/performance_data.csv"
+```
+
 To run with data from a CSV file in GCS:
 
 ```shell
@@ -162,9 +170,21 @@ Expected Output:
 ```
 *(Note: The order of entries in the `performanceProfile` array might vary. The `maxThroughputRps` for the first entry is an approximation and might have slight floating-point variations.)*
 
-## Verification With GCS Bucket Data
+## Verification With Real Data (GCS Bucket or local CSV file)
 
-Run with data from a CSV file in GCS:
+Start the Server with Your CSV Data:
+
+**Option A:** Using a local file
+
+> The provided path below is example benchmarking data collected for `Nvidia H100-80GB` and `Nvidia L4`. If you are testing with `ilp-tools/run_live_ilp_demo.py`, use this example data. The path is relative to where you run the binary from, not the binary itself. The path below assumes you are running from the project root directory.
+
+```shell
+./bin/performance_profiler \
+  --port=8080 \
+  --csv_file_path="performance_profiler/example_l4_h100_bm_data.csv"
+```
+
+**Option B:** Using a file in GCS
 
 ```shell
 ./bin/performance_profiler \

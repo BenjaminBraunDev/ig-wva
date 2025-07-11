@@ -28,6 +28,8 @@ var (
 	useMockData  = flag.Bool("use_mock_data", false, "Use mock data source instead of a real one")
 	gcsCsvBucket = flag.String("gcs_csv_bucket", "", "GCS bucket name for CSV data source")
 	gcsCsvObject = flag.String("gcs_csv_object", "", "GCS object path for CSV data source (e.g., path/to/data.csv)")
+	// Add the new flag for the local CSV file path
+	csvFilePath = flag.String("csv_file_path", "", "Path to a local CSV file data source.")
 )
 
 func main() {
@@ -133,6 +135,14 @@ func main() {
 		mockDS.SetDataPoints(mockWorkerID, mockRequestID3, sampleDataPoints3)
 
 		ds = mockDS
+	} else if *csvFilePath != "" { // Check for the new local file flag
+		fmt.Printf("Using local CSV file data source: %s\n", *csvFilePath)
+		fileDS, err := datasource.NewFileDataSource(*csvFilePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating local file data source: %v\n", err)
+			os.Exit(1)
+		}
+		ds = fileDS
 	} else if *gcsCsvBucket != "" && *gcsCsvObject != "" {
 		fmt.Printf("Using GCS CSV data source: gs://%s/%s\n", *gcsCsvBucket, *gcsCsvObject)
 		// log.Infof(ctx, "Using GCS CSV data source: gs://%s/%s", *gcsCsvBucket, *gcsCsvObject)
@@ -145,7 +155,8 @@ func main() {
 		ds = gcsDS
 	} else {
 		// --- Validate Configuration ---
-		fmt.Fprintln(os.Stderr, "Error: A data source must be specified. Use --use_mock_data or provide GCS flags (--gcs_csv_bucket and --gcs_csv_object).")
+		// Update the error message to include the new flag
+		fmt.Fprintln(os.Stderr, "Error: A data source must be specified. Use --use_mock_data, --csv_file_path, or GCS flags (--gcs_csv_bucket and --gcs_csv_object).")
 		// log.Fatal(ctx, "Error: A data source must be specified.")
 		os.Exit(1)
 	}
