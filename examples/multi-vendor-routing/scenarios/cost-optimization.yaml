@@ -1,0 +1,387 @@
+# Cost Optimization Routing Scenario
+# Prioritizes AMD GPUs for maximum cost savings while maintaining acceptable performance
+# Estimated 30-40% cost reduction compared to NVIDIA-only deployment
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cost-optimization-routing
+  namespace: llm-d-multi-vendor
+  labels:
+    scenario: cost-optimization
+    strategy: amd-first
+  annotations:
+    llm-d.ai/routing-strategy: "cost-optimization"
+    llm-d.ai/cost-target: "minimize"
+    llm-d.ai/performance-tolerance: "medium"
+    llm-d.ai/description: "Routes 75% traffic to AMD for cost savings, NVIDIA for overflow"
+spec:
+  parentRefs:
+  - name: multi-vendor-gateway
+  
+  rules:
+  # Critical/emergency requests still go to NVIDIA for guaranteed performance
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-priority"
+        value: "critical"
+    - headers:
+      - type: Exact
+        name: "x-emergency"  
+        value: "true"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 100  # 100% to NVIDIA for critical requests
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "critical-priority-override"
+        - name: "X-Cost-Override"
+          value: "performance-required"
+
+  # Batch processing requests - heavily favor AMD
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-workload-type"
+        value: "batch"
+    - headers:
+      - type: Exact
+        name: "x-sla-tolerance"
+        value: "relaxed"
+    backendRefs:
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 90  # 90% to AMD for batch workloads
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 10  # 10% overflow to NVIDIA
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "batch-cost-optimization"
+        - name: "X-Expected-Savings"
+          value: "40-percent"
+
+  # Development and testing requests - AMD preferred
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-environment"
+        value: "development"
+    - headers:
+      - type: Exact
+        name: "x-cost-tier"
+        value: "budget"
+    backendRefs:
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 85  # 85% to AMD for dev workloads
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 15  # 15% to NVIDIA when needed
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "development-cost-optimization"
+        - name: "X-Environment"
+          value: "non-production"
+
+  # Standard production requests - balanced toward AMD
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-cost-tier"
+        value: "standard"
+    - path:
+        type: PathPrefix
+        value: "/v1/"
+    backendRefs:
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 75  # 75% to AMD for cost savings
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 25  # 25% to NVIDIA for quality balance
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "standard-cost-optimization"
+        - name: "X-Cost-Savings-Target"
+          value: "30-percent"
+
+  # Model-specific routing for cost optimization
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-model-size"
+        value: "small"  # <10B parameters
+    backendRefs:
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 95  # Small models run great on AMD
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 5   # Minimal NVIDIA usage
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "small-model-amd-optimized"
+
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-model-size"
+        value: "medium"  # 10-30B parameters
+    backendRefs:
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 70  # Still prefer AMD for medium models
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 30  # More NVIDIA for complex models
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "medium-model-cost-balanced"
+
+  # Default fallback - cost-optimized approach
+  - matches:
+    - path:
+        type: PathPrefix
+        value: "/"
+    backendRefs:
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 70  # Default to AMD for cost savings
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 30  # NVIDIA for reliability
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "default-cost-optimization"
+        - name: "X-Routing-Strategy"
+          value: "amd-preferred"
+
+---
+# Cost Optimization Service Monitor
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cost-optimization-metrics
+  namespace: llm-d-multi-vendor
+  labels:
+    scenario: cost-optimization
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: inference-pool
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    metricRelabelings:
+    # Add cost optimization labels
+    - sourceLabels: [__name__]
+      targetLabel: routing_scenario
+      replacement: "cost-optimization"
+    - sourceLabels: [backend_vendor]
+      targetLabel: cost_tier
+      regex: "nvidia.*"
+      replacement: "premium"
+    - sourceLabels: [backend_vendor]
+      targetLabel: cost_tier
+      regex: "amd.*"
+      replacement: "standard"
+
+---
+# PrometheusRule for Cost Optimization Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cost-optimization-alerts
+  namespace: llm-d-multi-vendor
+  labels:
+    scenario: cost-optimization
+spec:
+  groups:
+  - name: cost-optimization
+    interval: 30s
+    rules:
+    
+    # Alert if cost savings drop below target
+    - alert: CostSavingsBelowTarget
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total{backend_vendor="amd"}[5m])) /
+          sum(rate(ig_wva_requests_total[5m]))
+        ) < 0.65  # Less than 65% AMD traffic
+      for: 5m
+      labels:
+        severity: warning
+        scenario: cost-optimization
+      annotations:
+        summary: "Cost savings below target in cost optimization scenario"
+        description: "AMD traffic share is {{ $value | humanizePercentage }}, target is 65%+"
+        runbook_url: "https://llm-d.ai/docs/troubleshooting/cost-optimization"
+
+    # Alert if AMD pools are saturated (forcing expensive NVIDIA usage)
+    - alert: AMDPoolSaturation
+      expr: |
+        avg(ig_wva_pool_utilization{vendor="amd"}) > 0.9
+      for: 3m
+      labels:
+        severity: critical
+        scenario: cost-optimization
+      annotations:
+        summary: "AMD GPU pools approaching saturation"
+        description: "AMD pool utilization is {{ $value | humanizePercentage }}, consider scaling"
+        action: "Scale AMD pools or temporarily route to NVIDIA"
+
+    # Alert if cost per token exceeds budget
+    - alert: CostPerTokenExceeded
+      expr: |
+        sum(rate(ig_wva_cost_total[5m])) / sum(rate(ig_wva_tokens_generated_total[5m])) > 0.0001
+      for: 10m
+      labels:
+        severity: warning
+        scenario: cost-optimization
+      annotations:
+        summary: "Cost per token exceeded budget threshold"
+        description: "Current cost per token: ${{ $value }}, budget: $0.0001"
+        action: "Review routing weights and AMD pool scaling"
+
+    # Alert if NVIDIA usage is too high for cost optimization scenario
+    - alert: NVIDIAUsageTooHigh
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total{backend_vendor="nvidia"}[5m])) /
+          sum(rate(ig_wva_requests_total[5m]))
+        ) > 0.40  # More than 40% NVIDIA traffic
+      for: 5m
+      labels:
+        severity: warning
+        scenario: cost-optimization
+      annotations:
+        summary: "NVIDIA usage higher than expected in cost optimization mode"
+        description: "NVIDIA traffic share is {{ $value | humanizePercentage }}, target is <40%"
+        action: "Check AMD pool health and capacity"
+
+---
+# ConfigMap with Cost Optimization Documentation
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cost-optimization-guide
+  namespace: llm-d-multi-vendor
+  labels:
+    scenario: cost-optimization
+data:
+  README.md: |
+    # Cost Optimization Routing Scenario
+    
+    ## Overview
+    This scenario maximizes cost savings by routing 70-75% of traffic to AMD GPUs while maintaining 
+    acceptable performance for most workloads.
+    
+    ## Expected Outcomes
+    - **Cost Reduction**: 30-40% compared to NVIDIA-only deployment
+    - **Performance Impact**: 15-25% slower response times
+    - **Availability**: 99.5%+ uptime with proper failover
+    
+    ## Traffic Distribution
+    - AMD MI300X: 70-75% (cost-optimized workloads)
+    - NVIDIA H100: 25-30% (performance-critical workloads)
+    
+    ## Request Routing Logic
+    1. **Critical requests** (x-priority: critical) → 100% NVIDIA
+    2. **Batch workloads** (x-workload-type: batch) → 90% AMD
+    3. **Development** (x-environment: development) → 85% AMD  
+    4. **Standard production** (x-cost-tier: standard) → 75% AMD
+    5. **Small models** (<10B params) → 95% AMD
+    6. **Default** → 70% AMD
+    
+    ## Monitoring Queries
+    ```promql
+    # Cost savings rate
+    (
+      sum(rate(ig_wva_requests_total{backend_vendor="amd"}[5m])) * 0.5 +
+      sum(rate(ig_wva_requests_total{backend_vendor="nvidia"}[5m])) * 2.0
+    ) / (
+      sum(rate(ig_wva_requests_total[5m])) * 2.0
+    )
+    
+    # AMD vs NVIDIA distribution
+    sum(rate(ig_wva_requests_total[5m])) by (backend_vendor)
+    
+    # Performance impact
+    histogram_quantile(0.95, 
+      sum(rate(ig_wva_request_duration_seconds_bucket[5m])) by (le, backend_vendor)
+    )
+    ```
+    
+    ## Optimization Tips
+    1. **Scale AMD pools** during peak hours for maximum savings
+    2. **Use batch processing** for non-time-sensitive workloads  
+    3. **Monitor SLA compliance** and adjust routing weights
+    4. **Consider quantized models** on AMD for even better cost efficiency
+    
+    ## Testing
+    ```bash
+    # Test cost-optimized routing
+    curl -X POST "http://gateway/v1/completions" \
+      -H "X-Cost-Tier: standard" \
+      -H "X-Workload-Type: batch" \
+      -d '{"model": "llama-7b", "prompt": "test", "max_tokens": 50}'
+    
+    # Should route to AMD (check X-Backend-Used header)
+    ```
+
+  cost-analysis.yaml: |
+    # Cost Analysis Configuration
+    pricing:
+      nvidia_h100:
+        hourly_rate: 2.00
+        performance_baseline: 1.0
+        optimal_utilization: 0.85
+      
+      amd_mi300x:
+        hourly_rate: 0.60  # 70% less than H100
+        performance_ratio: 0.75  # 75% of H100 performance
+        optimal_utilization: 0.80
+    
+    scenarios:
+      cost_optimized:
+        amd_traffic_share: 0.75
+        nvidia_traffic_share: 0.25
+        expected_cost_reduction: 0.35
+        performance_degradation: 0.18
+      
+      balanced:
+        amd_traffic_share: 0.50
+        nvidia_traffic_share: 0.50
+        expected_cost_reduction: 0.20
+        performance_degradation: 0.12
+      
+      performance_first:
+        amd_traffic_share: 0.25
+        nvidia_traffic_share: 0.75
+        expected_cost_reduction: 0.05
+        performance_degradation: 0.06

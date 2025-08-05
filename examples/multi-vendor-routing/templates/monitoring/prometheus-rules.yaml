@@ -1,0 +1,435 @@
+# Prometheus Rules for Multi-Vendor LLM Inference Monitoring
+# Comprehensive alerting and recording rules for production deployment
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: multi-vendor-inference-rules
+  namespace: llm-d-multi-vendor
+  labels:
+    app.kubernetes.io/name: llm-d
+    app.kubernetes.io/component: monitoring
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+  
+  # Recording rules for efficient querying
+  - name: multi-vendor-recording-rules
+    interval: 30s
+    rules:
+    
+    # Request rate by vendor
+    - record: ig_wva:request_rate_5m
+      expr: sum(rate(ig_wva_requests_total[5m])) by (backend_vendor)
+      labels:
+        job: multi-vendor-inference
+    
+    # Latency percentiles by vendor
+    - record: ig_wva:latency_p95_5m
+      expr: histogram_quantile(0.95, sum(rate(ig_wva_request_duration_seconds_bucket[5m])) by (le, backend_vendor))
+      labels:
+        percentile: "95"
+    
+    - record: ig_wva:latency_p99_5m
+      expr: histogram_quantile(0.99, sum(rate(ig_wva_request_duration_seconds_bucket[5m])) by (le, backend_vendor))
+      labels:
+        percentile: "99"
+    
+    # Cost efficiency metrics
+    - record: ig_wva:cost_efficiency_5m
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total{backend_vendor="amd"}[5m])) * 0.6 +
+          sum(rate(ig_wva_requests_total{backend_vendor="nvidia"}[5m])) * 2.0
+        ) / (
+          sum(rate(ig_wva_requests_total[5m])) * 2.0
+        )
+      labels:
+        metric_type: cost
+    
+    # SLA compliance rate
+    - record: ig_wva:sla_compliance_5m
+      expr: |
+        1 - (
+          sum(rate(ig_wva_sla_violations_total[5m])) /
+          sum(rate(ig_wva_requests_total[5m]))
+        )
+      labels:
+        metric_type: sla
+    
+    # GPU utilization by vendor
+    - record: ig_wva:gpu_utilization_avg
+      expr: avg(nvidia_sml_utilization_gpu_ratio) by (node, vendor)
+      labels:
+        vendor: nvidia
+    
+    - record: ig_wva:gpu_utilization_avg
+      expr: avg(rocm_smi_utilization_gpu_ratio) by (node, vendor)
+      labels:
+        vendor: amd
+
+  # Critical system health alerts
+  - name: multi-vendor-critical-alerts
+    interval: 15s
+    rules:
+    
+    # Critical: Complete vendor failure
+    - alert: VendorCompleteFailure
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total[2m])) by (backend_vendor) == 0
+          and
+          sum(rate(ig_wva_requests_total[2m])) > 0
+        )
+        or
+        (
+          sum(up{job=~".*inference-pool.*"}) by (backend_vendor) == 0
+          and
+          sum(up{job=~".*inference-pool.*"}) > 0
+        )
+      for: 1m
+      labels:
+        severity: critical
+        component: multi-vendor-routing
+        impact: "high"
+      annotations:
+        summary: "Complete failure of {{ $labels.backend_vendor }} vendor"
+        description: "{{ $labels.backend_vendor }} is receiving no traffic or all pods are down"
+        action: "IMMEDIATE: Investigate {{ $labels.backend_vendor }} infrastructure"
+        runbook_url: "https://llm-d.ai/docs/runbooks/vendor-failure"
+    
+    # Critical: Extreme latency spike
+    - alert: ExtremeLatencySpike
+      expr: |
+        ig_wva:latency_p99_5m > 2.0  # 2 seconds
+        and
+        ig_wva:latency_p99_5m > 5 * (ig_wva:latency_p99_5m offset 10m)
+      for: 2m
+      labels:
+        severity: critical
+        component: performance
+        impact: "high"
+      annotations:
+        summary: "Extreme latency spike detected for {{ $labels.backend_vendor }}"
+        description: "P99 latency: {{ $value }}s (5x higher than 10m ago)"
+        action: "IMMEDIATE: Check {{ $labels.backend_vendor }} health and route traffic away"
+        runbook_url: "https://llm-d.ai/docs/runbooks/latency-spike"
+    
+    # Critical: SLA violation storm
+    - alert: SLAViolationStorm
+      expr: |
+        (
+          sum(rate(ig_wva_sla_violations_total[1m])) /
+          sum(rate(ig_wva_requests_total[1m]))
+        ) > 0.1  # 10% SLA violations
+      for: 30s
+      labels:
+        severity: critical
+        component: sla
+        impact: "high"
+      annotations:
+        summary: "Critical SLA violation rate: {{ $value | humanizePercentage }}"
+        description: "SLA violation rate exceeds 10% threshold"
+        action: "EMERGENCY: Activate incident response, scale critical pools"
+        runbook_url: "https://llm-d.ai/docs/runbooks/sla-violations"
+
+  # Performance and capacity alerts
+  - name: multi-vendor-performance-alerts
+    interval: 30s
+    rules:
+    
+    # Warning: High latency
+    - alert: HighLatency
+      expr: |
+        ig_wva:latency_p95_5m > 0.5  # 500ms P95
+        or
+        ig_wva:latency_p99_5m > 1.0  # 1s P99
+      for: 3m
+      labels:
+        severity: warning
+        component: performance
+        impact: "medium"
+      annotations:
+        summary: "High latency detected for {{ $labels.backend_vendor }}"
+        description: "P95: {{ ig_wva:latency_p95_5m }}s, P99: {{ ig_wva:latency_p99_5m }}s"
+        action: "Monitor and consider scaling {{ $labels.backend_vendor }} pools"
+        runbook_url: "https://llm-d.ai/docs/runbooks/high-latency"
+    
+    # Warning: GPU utilization high
+    - alert: GPUUtilizationHigh
+      expr: |
+        ig_wva:gpu_utilization_avg > 0.85
+      for: 5m
+      labels:
+        severity: warning
+        component: capacity
+        impact: "medium"
+      annotations:
+        summary: "High GPU utilization on {{ $labels.vendor }} {{ $labels.node }}"
+        description: "GPU utilization: {{ $value | humanizePercentage }}"
+        action: "Consider scaling {{ $labels.vendor }} pools or load balancing"
+        runbook_url: "https://llm-d.ai/docs/runbooks/gpu-capacity"
+    
+    # Critical: GPU utilization critical
+    - alert: GPUUtilizationCritical
+      expr: |
+        ig_wva:gpu_utilization_avg > 0.95
+      for: 2m
+      labels:
+        severity: critical
+        component: capacity
+        impact: "high"
+      annotations:
+        summary: "Critical GPU utilization on {{ $labels.vendor }} {{ $labels.node }}"
+        description: "GPU utilization: {{ $value | humanizePercentage }}"
+        action: "URGENT: Scale {{ $labels.vendor }} pools immediately"
+        runbook_url: "https://llm-d.ai/docs/runbooks/gpu-critical"
+    
+    # Warning: Queue length growing
+    - alert: QueueLengthGrowing
+      expr: |
+        avg(vllm_queue_length) by (inference_pool) > 10
+        and
+        deriv(avg(vllm_queue_length) by (inference_pool)[5m]) > 0.5
+      for: 3m
+      labels:
+        severity: warning
+        component: capacity
+        impact: "medium"
+      annotations:
+        summary: "Growing queue length in {{ $labels.inference_pool }}"
+        description: "Current queue length: {{ $value }}, growing trend detected"
+        action: "Scale {{ $labels.inference_pool }} or investigate performance issues"
+    
+    # Critical: Queue length critical
+    - alert: QueueLengthCritical
+      expr: |
+        avg(vllm_queue_length) by (inference_pool) > 50
+      for: 1m
+      labels:
+        severity: critical
+        component: capacity
+        impact: "high"
+      annotations:
+        summary: "Critical queue length in {{ $labels.inference_pool }}"
+        description: "Queue length: {{ $value }} requests"
+        action: "URGENT: Emergency scaling of {{ $labels.inference_pool }}"
+
+  # Cost optimization alerts
+  - name: multi-vendor-cost-alerts
+    interval: 60s
+    rules:
+    
+    # Warning: Cost efficiency below target
+    - alert: CostEfficiencyBelowTarget
+      expr: |
+        ig_wva:cost_efficiency_5m > 0.8  # Spending >80% of NVIDIA-only cost
+      for: 10m
+      labels:
+        severity: warning
+        component: cost-optimization
+        impact: "low"
+      annotations:
+        summary: "Cost efficiency below target"
+        description: "Current cost efficiency: {{ $value | humanizePercentage }} of NVIDIA-only baseline"
+        action: "Review routing weights, consider increasing AMD allocation"
+        runbook_url: "https://llm-d.ai/docs/runbooks/cost-optimization"
+    
+    # Info: AMD utilization low
+    - alert: AMDUtilizationLow
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total{backend_vendor="amd"}[5m])) /
+          sum(rate(ig_wva_requests_total[5m]))
+        ) < 0.3  # Less than 30% AMD traffic
+        and
+        sum(rate(ig_wva_requests_total[5m])) > 10  # Significant traffic
+      for: 15m
+      labels:
+        severity: info
+        component: cost-optimization
+        impact: "low"
+      annotations:
+        summary: "AMD utilization lower than expected"
+        description: "AMD traffic share: {{ $value | humanizePercentage }}"
+        action: "Consider increasing AMD routing weights for cost savings"
+    
+    # Warning: NVIDIA overutilization in cost-optimized scenario
+    - alert: NVIDIAOverutilizationCostScenario
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total{backend_vendor="nvidia"}[5m])) /
+          sum(rate(ig_wva_requests_total[5m]))
+        ) > 0.6  # More than 60% NVIDIA traffic
+        and
+        on() label_replace(kube_pod_labels{label_routing_scenario="cost-optimization"}, "scenario", "$1", "label_routing_scenario", "(.*)")
+      for: 10m
+      labels:
+        severity: warning
+        component: cost-optimization
+        impact: "medium"
+      annotations:
+        summary: "High NVIDIA usage in cost optimization scenario"
+        description: "NVIDIA traffic share: {{ $value | humanizePercentage }}"
+        action: "Check AMD pool capacity and health"
+
+  # Business continuity alerts
+  - name: multi-vendor-continuity-alerts
+    interval: 60s
+    rules:
+    
+    # Warning: Single vendor dependency
+    - alert: SingleVendorDependency
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total{backend_vendor="nvidia"}[5m])) /
+          sum(rate(ig_wva_requests_total[5m])) > 0.9
+        )
+        or
+        (
+          sum(rate(ig_wva_requests_total{backend_vendor="amd"}[5m])) /
+          sum(rate(ig_wva_requests_total[5m])) > 0.9
+        )
+      for: 15m
+      labels:
+        severity: warning
+        component: business-continuity
+        impact: "medium"
+      annotations:
+        summary: "High dependency on single vendor detected"
+        description: "{{ $labels.backend_vendor }} handling >90% of traffic"
+        action: "Review routing strategy for better vendor distribution"
+        runbook_url: "https://llm-d.ai/docs/runbooks/vendor-diversity"
+    
+    # Critical: Failover not working
+    - alert: FailoverNotWorking
+      expr: |
+        (
+          sum(up{job=~".*nvidia.*"}) == 0
+          and
+          sum(rate(ig_wva_requests_total{backend_vendor="nvidia"}[2m])) > 0
+        )
+        or
+        (
+          sum(up{job=~".*amd.*"}) == 0
+          and
+          sum(rate(ig_wva_requests_total{backend_vendor="amd"}[2m])) > 0
+        )
+      for: 2m
+      labels:
+        severity: critical
+        component: business-continuity
+        impact: "high"
+      annotations:
+        summary: "Vendor failover mechanism not working"
+        description: "Traffic still routing to failed {{ $labels.backend_vendor }} vendor"
+        action: "URGENT: Check routing configuration and gateway health"
+        runbook_url: "https://llm-d.ai/docs/runbooks/failover-issues"
+
+  # Application-level alerts
+  - name: multi-vendor-application-alerts
+    interval: 45s
+    rules:
+    
+    # Warning: High error rate
+    - alert: HighErrorRate
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total{status=~"5.."}[5m])) by (backend_vendor) /
+          sum(rate(ig_wva_requests_total[5m])) by (backend_vendor)
+        ) > 0.05  # 5% error rate
+      for: 5m
+      labels:
+        severity: warning
+        component: application
+        impact: "medium"
+      annotations:
+        summary: "High error rate for {{ $labels.backend_vendor }}"
+        description: "Error rate: {{ $value | humanizePercentage }}"
+        action: "Investigate {{ $labels.backend_vendor }} application logs"
+        runbook_url: "https://llm-d.ai/docs/runbooks/high-error-rate"
+    
+    # Critical: Very high error rate
+    - alert: VeryHighErrorRate
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total{status=~"5.."}[2m])) by (backend_vendor) /
+          sum(rate(ig_wva_requests_total[2m])) by (backend_vendor)
+        ) > 0.2  # 20% error rate
+      for: 1m
+      labels:
+        severity: critical
+        component: application
+        impact: "high"
+      annotations:
+        summary: "Very high error rate for {{ $labels.backend_vendor }}"
+        description: "Error rate: {{ $value | humanizePercentage }}"
+        action: "URGENT: Route traffic away from {{ $labels.backend_vendor }}"
+        runbook_url: "https://llm-d.ai/docs/runbooks/critical-error-rate"
+    
+    # Info: Cache performance degraded
+    - alert: CachePerformanceDegraded
+      expr: |
+        (
+          sum(rate(ig_wva_cache_hits_total[5m])) /
+          sum(rate(ig_wva_cache_requests_total[5m]))
+        ) < 0.3  # Less than 30% cache hit rate
+        and
+        sum(rate(ig_wva_cache_requests_total[5m])) > 5  # Significant cache usage
+      for: 10m
+      labels:
+        severity: info
+        component: application
+        impact: "low"
+      annotations:
+        summary: "Cache hit rate below expected levels"
+        description: "Cache hit rate: {{ $value | humanizePercentage }}"
+        action: "Review cache configuration and prefix patterns"
+
+  # Infrastructure alerts
+  - name: multi-vendor-infrastructure-alerts
+    interval: 60s
+    rules:
+    
+    # Warning: Pod restart frequency high
+    - alert: PodRestartFrequencyHigh
+      expr: |
+        sum(rate(kube_pod_container_status_restarts_total{namespace="llm-d-multi-vendor"}[1h])) by (pod) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: infrastructure
+        impact: "medium"
+      annotations:
+        summary: "High pod restart frequency for {{ $labels.pod }}"
+        description: "Restart rate: {{ $value }}/hour"
+        action: "Investigate pod {{ $labels.pod }} stability issues"
+    
+    # Critical: Persistent volume issues
+    - alert: PersistentVolumeIssues
+      expr: |
+        kube_persistentvolume_status_phase{phase!="Bound"} > 0
+      for: 2m
+      labels:
+        severity: critical
+        component: infrastructure
+        impact: "high"
+      annotations:
+        summary: "Persistent volume {{ $labels.persistentvolume }} not bound"
+        description: "PV status: {{ $labels.phase }}"
+        action: "URGENT: Check storage infrastructure"
+    
+    # Warning: Network policy blocking traffic
+    - alert: NetworkPolicyBlocking
+      expr: |
+        increase(ig_wva_network_policy_drops_total[5m]) > 10
+      for: 3m
+      labels:
+        severity: warning
+        component: infrastructure
+        impact: "medium"
+      annotations:
+        summary: "Network policy blocking unusual amount of traffic"
+        description: "Dropped packets: {{ $value }} in last 5m"
+        action: "Review network policies and traffic patterns"
