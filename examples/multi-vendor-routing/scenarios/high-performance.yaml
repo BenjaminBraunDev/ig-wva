@@ -1,0 +1,529 @@
+# High Performance Routing Scenario
+# Prioritizes NVIDIA GPUs for optimal performance while using AMD for overflow
+# Targets <200ms p99 latency with strict SLA enforcement
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: high-performance-routing
+  namespace: llm-d-multi-vendor
+  labels:
+    scenario: high-performance
+    strategy: nvidia-first
+  annotations:
+    llm-d.ai/routing-strategy: "performance-optimization"
+    llm-d.ai/latency-target: "p99-200ms"
+    llm-d.ai/sla-enforcement: "strict"
+    llm-d.ai/description: "Routes 80% traffic to NVIDIA for optimal performance"
+spec:
+  parentRefs:
+  - name: multi-vendor-gateway
+  
+  rules:
+  # Ultra-low latency requests - NVIDIA only
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-latency-tier"
+        value: "ultra-low"
+    - headers:
+      - type: Exact
+        name: "x-sla-target"
+        value: "p99-100ms"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 100  # 100% NVIDIA for ultra-low latency
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "ultra-low-latency-required"
+        - name: "X-Performance-Tier"
+          value: "maximum"
+
+  # Real-time interactive requests - NVIDIA preferred
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-workload-type"
+        value: "interactive"
+    - headers:
+      - type: Exact
+        name: "x-sla-target"
+        value: "p95-150ms"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 90  # 90% NVIDIA for interactive workloads
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 10  # 10% AMD only if NVIDIA saturated
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "interactive-performance-priority"
+        - name: "X-Fallback-Strategy"
+          value: "nvidia-overflow-only"
+
+  # Production API requests - NVIDIA primary
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-environment"
+        value: "production"
+    - headers:
+      - type: Exact
+        name: "x-priority"
+        value: "high"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 85  # 85% NVIDIA for production
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 15  # 15% AMD for capacity overflow
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "production-performance-sla"
+        - name: "X-SLA-Class"
+          value: "premium"
+
+  # Large model inference - NVIDIA optimized
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-model-size"
+        value: "large"  # >30B parameters
+    - headers:
+      - type: Exact
+        name: "x-complexity"
+        value: "high"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 95  # Large models perform much better on NVIDIA
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 5   # Minimal AMD usage for large models
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "large-model-nvidia-optimized"
+        - name: "X-Model-Optimization"
+          value: "tensor-parallel-preferred"
+
+  # Code generation requests - NVIDIA preferred for accuracy
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-task-type"
+        value: "code-generation"
+    - headers:
+      - type: Exact
+        name: "x-quality-tier"
+        value: "high"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 80  # NVIDIA better for code generation quality
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 20  # AMD for overflow
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "code-generation-quality-priority"
+        - name: "X-Task-Optimization"
+          value: "accuracy-over-cost"
+
+  # Streaming requests - NVIDIA for consistent performance
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-response-type"
+        value: "streaming"
+    - headers:
+      - type: Exact
+        name: "x-consistency"
+        value: "required"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 90  # Consistent streaming performance on NVIDIA
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 10  # AMD fallback
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "streaming-consistency-required"
+        - name: "X-Stream-Optimization"
+          value: "low-jitter"
+
+  # Standard high-performance requests
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-performance-tier"
+        value: "high"
+    - path:
+        type: PathPrefix
+        value: "/v1/"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 80  # 80% NVIDIA for high performance
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 20  # 20% AMD for load balancing
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "high-performance-standard"
+        - name: "X-Load-Balance"
+          value: "nvidia-primary"
+
+  # Default fallback - performance-optimized approach
+  - matches:
+    - path:
+        type: PathPrefix
+        value: "/"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 75  # Default to NVIDIA for performance
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 25  # AMD for cost balance
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Reason"
+          value: "default-performance-optimization"
+        - name: "X-Routing-Strategy"
+          value: "nvidia-preferred"
+
+---
+# High Performance Service Monitor with detailed metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: high-performance-metrics
+  namespace: llm-d-multi-vendor
+  labels:
+    scenario: high-performance
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: inference-pool
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 10s  # More frequent monitoring for performance scenario
+    metricRelabelings:
+    # Add performance optimization labels
+    - sourceLabels: [__name__]
+      targetLabel: routing_scenario
+      replacement: "high-performance"
+    - sourceLabels: [backend_vendor]
+      targetLabel: performance_tier
+      regex: "nvidia.*"
+      replacement: "optimal"
+    - sourceLabels: [backend_vendor]
+      targetLabel: performance_tier
+      regex: "amd.*"
+      replacement: "acceptable"
+
+---
+# PrometheusRule for High Performance Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: high-performance-alerts
+  namespace: llm-d-multi-vendor
+  labels:
+    scenario: high-performance
+spec:
+  groups:
+  - name: high-performance-sla
+    interval: 15s  # Frequent evaluation for performance monitoring
+    rules:
+    
+    # Critical: p99 latency exceeds SLA target
+    - alert: P99LatencyExceeded
+      expr: |
+        histogram_quantile(0.99, 
+          sum(rate(ig_wva_request_duration_seconds_bucket[2m])) by (le, backend_vendor)
+        ) > 0.2  # 200ms
+      for: 1m
+      labels:
+        severity: critical
+        scenario: high-performance
+        sla_violation: "true"
+      annotations:
+        summary: "P99 latency exceeded 200ms SLA target"
+        description: "{{ $labels.backend_vendor }} P99 latency: {{ $value }}s"
+        action: "Route traffic away from slow backend immediately"
+        runbook_url: "https://llm-d.ai/docs/troubleshooting/performance-sla"
+
+    # Warning: p95 latency approaching limits
+    - alert: P95LatencyApproachingLimit
+      expr: |
+        histogram_quantile(0.95, 
+          sum(rate(ig_wva_request_duration_seconds_bucket[2m])) by (le, backend_vendor)
+        ) > 0.15  # 150ms
+      for: 2m
+      labels:
+        severity: warning
+        scenario: high-performance
+      annotations:
+        summary: "P95 latency approaching performance limits"
+        description: "{{ $labels.backend_vendor }} P95 latency: {{ $value }}s"
+        action: "Monitor closely and prepare for traffic shifting"
+
+    # Critical: NVIDIA utilization too high (performance degradation risk)
+    - alert: NVIDIAUtilizationCritical
+      expr: |
+        avg(ig_wva_pool_utilization{vendor="nvidia"}) > 0.95
+      for: 1m
+      labels:
+        severity: critical
+        scenario: high-performance
+      annotations:
+        summary: "NVIDIA pools at critical utilization levels"
+        description: "NVIDIA utilization: {{ $value | humanizePercentage }}"
+        action: "Scale NVIDIA pools immediately or shed load"
+
+    # Warning: Performance degradation detected
+    - alert: PerformanceDegradation
+      expr: |
+        (
+          rate(ig_wva_request_duration_seconds_sum[5m]) / 
+          rate(ig_wva_request_duration_seconds_count[5m])
+        ) > 1.2 * (
+          rate(ig_wva_request_duration_seconds_sum[5m] offset 1h) / 
+          rate(ig_wva_request_duration_seconds_count[5m] offset 1h)
+        )
+      for: 5m
+      labels:
+        severity: warning
+        scenario: high-performance
+      annotations:
+        summary: "Performance degradation detected compared to baseline"
+        description: "Current avg latency 20% higher than 1h ago"
+        action: "Investigate recent changes and system health"
+
+    # Warning: AMD usage too high for performance scenario
+    - alert: AMDUsageTooHighForPerformance
+      expr: |
+        (
+          sum(rate(ig_wva_requests_total{backend_vendor="amd"}[5m])) /
+          sum(rate(ig_wva_requests_total[5m]))
+        ) > 0.35  # More than 35% AMD traffic
+      for: 5m
+      labels:
+        severity: warning
+        scenario: high-performance
+      annotations:
+        summary: "AMD usage higher than expected in high-performance mode"
+        description: "AMD traffic share: {{ $value | humanizePercentage }}, target: <35%"
+        action: "Check NVIDIA pool capacity and health"
+
+    # Critical: SLA violation rate too high
+    - alert: SLAViolationRateHigh
+      expr: |
+        sum(rate(ig_wva_sla_violations_total[5m])) / 
+        sum(rate(ig_wva_requests_total[5m])) > 0.01  # >1% SLA violations
+      for: 2m
+      labels:
+        severity: critical
+        scenario: high-performance
+        sla_violation: "true"
+      annotations:
+        summary: "SLA violation rate exceeds 1% threshold"
+        description: "Current SLA violation rate: {{ $value | humanizePercentage }}"
+        action: "Emergency: Review routing and scale high-performance pools"
+
+---
+# ConfigMap with High Performance Documentation
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: high-performance-guide
+  namespace: llm-d-multi-vendor
+  labels:
+    scenario: high-performance
+data:
+  README.md: |
+    # High Performance Routing Scenario
+    
+    ## Overview
+    This scenario prioritizes performance and SLA compliance by routing 75-80% of traffic to 
+    NVIDIA H100 GPUs while using AMD for overflow and non-critical workloads.
+    
+    ## Performance Targets
+    - **P99 Latency**: <200ms
+    - **P95 Latency**: <150ms  
+    - **P50 Latency**: <80ms
+    - **Availability**: 99.9%+
+    - **SLA Compliance**: >99%
+    
+    ## Traffic Distribution
+    - NVIDIA H100: 75-80% (performance-critical workloads)
+    - AMD MI300X: 20-25% (overflow and acceptable performance workloads)
+    
+    ## Request Routing Logic
+    1. **Ultra-low latency** (p99-100ms) → 100% NVIDIA
+    2. **Interactive workloads** → 90% NVIDIA
+    3. **Production high-priority** → 85% NVIDIA
+    4. **Large models** (>30B) → 95% NVIDIA  
+    5. **Code generation** → 80% NVIDIA
+    6. **Streaming** → 90% NVIDIA
+    7. **Standard high-performance** → 80% NVIDIA
+    8. **Default** → 75% NVIDIA
+    
+    ## Performance Monitoring
+    ```promql
+    # P99 latency by vendor
+    histogram_quantile(0.99, 
+      sum(rate(ig_wva_request_duration_seconds_bucket[5m])) by (le, backend_vendor)
+    )
+    
+    # SLA compliance rate  
+    1 - (
+      sum(rate(ig_wva_sla_violations_total[5m])) /
+      sum(rate(ig_wva_requests_total[5m]))
+    )
+    
+    # NVIDIA vs AMD performance comparison
+    histogram_quantile(0.95, 
+      sum(rate(ig_wva_request_duration_seconds_bucket[5m])) by (le, backend_vendor)
+    )
+    
+    # Throughput by vendor
+    sum(rate(ig_wva_requests_total[5m])) by (backend_vendor)
+    ```
+    
+    ## Optimization Strategies
+    1. **Pre-warm NVIDIA pools** during expected high-load periods
+    2. **Use tensor parallelism** for large models on NVIDIA
+    3. **Enable prefix caching** for repeated high-performance requests
+    4. **Monitor queue lengths** and scale proactively
+    5. **Route AMD only for overflow** to maintain performance consistency
+    
+    ## Testing Performance Scenarios
+    ```bash
+    # Test ultra-low latency routing
+    curl -X POST "http://gateway/v1/chat/completions" \
+      -H "X-Latency-Tier: ultra-low" \
+      -H "X-SLA-Target: p99-100ms" \
+      -d '{"model": "llama-70b", "messages": [...], "max_tokens": 100}'
+    
+    # Test interactive workload
+    curl -X POST "http://gateway/v1/completions" \
+      -H "X-Workload-Type: interactive" \
+      -H "X-SLA-Target: p95-150ms" \
+      -d '{"model": "llama-13b", "prompt": "...", "max_tokens": 200}'
+    
+    # Load test for performance validation  
+    ab -n 1000 -c 10 -H "X-Performance-Tier: high" \
+       -p request.json -T application/json \
+       http://gateway/v1/completions
+    ```
+    
+    ## Alert Thresholds
+    - **Critical**: P99 > 200ms, SLA violations > 1%
+    - **Warning**: P95 > 150ms, NVIDIA utilization > 95%
+    - **Info**: AMD usage > 35% (may indicate NVIDIA capacity issues)
+
+  performance-benchmarks.yaml: |
+    # Performance Benchmarks Configuration
+    targets:
+      ultra_low_latency:
+        p99_target_ms: 100
+        p95_target_ms: 70
+        p50_target_ms: 40
+        nvidia_allocation: 1.0
+        amd_allocation: 0.0
+      
+      interactive:
+        p99_target_ms: 150
+        p95_target_ms: 100
+        p50_target_ms: 60
+        nvidia_allocation: 0.9
+        amd_allocation: 0.1
+      
+      production:
+        p99_target_ms: 200
+        p95_target_ms: 130
+        p50_target_ms: 80
+        nvidia_allocation: 0.85
+        amd_allocation: 0.15
+      
+      standard:
+        p99_target_ms: 300
+        p95_target_ms: 200
+        p50_target_ms: 120
+        nvidia_allocation: 0.75
+        amd_allocation: 0.25
+    
+    expected_performance:
+      nvidia_h100:
+        tokens_per_second: 45
+        first_token_latency_ms: 25
+        memory_efficiency: 0.9
+        
+      amd_mi300x:
+        tokens_per_second: 34  # ~75% of NVIDIA
+        first_token_latency_ms: 35  # ~40% slower
+        memory_efficiency: 0.85
+
+  sla-definitions.yaml: |
+    # SLA Definitions for High Performance Scenario
+    sla_tiers:
+      ultra_premium:
+        p99_latency_ms: 100
+        p95_latency_ms: 70
+        availability_percent: 99.99
+        nvidia_only: true
+        
+      premium:
+        p99_latency_ms: 150
+        p95_latency_ms: 100
+        availability_percent: 99.9
+        nvidia_primary: true
+        amd_overflow: true
+        
+      standard:
+        p99_latency_ms: 200
+        p95_latency_ms: 130
+        availability_percent: 99.5
+        nvidia_preferred: true
+        amd_acceptable: true
+    
+    violation_handling:
+      immediate_actions:
+        - route_away_from_slow_backend
+        - scale_nvidia_pools
+        - enable_request_prioritization
+        
+      escalation_thresholds:
+        warning_violation_rate: 0.005  # 0.5%
+        critical_violation_rate: 0.01  # 1%
+        emergency_violation_rate: 0.02  # 2%

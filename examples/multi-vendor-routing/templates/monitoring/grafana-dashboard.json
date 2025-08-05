@@ -1,0 +1,542 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Multi-Vendor LLM Inference Routing",
+    "tags": ["llm-d", "multi-vendor", "inference", "gpu"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Request Distribution by Vendor",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "options": {
+          "pieType": "pie",
+          "legend": {"displayMode": "table", "placement": "right", "values": ["percent"]},
+          "tooltip": {"mode": "single"}
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(ig_wva_requests_total[5m])) by (backend_vendor)",
+            "legendFormat": "{{ backend_vendor }}",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Cost Savings Over Time",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "text": {"titleSize": 18, "valueSize": 36},
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 50,
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 20},
+                {"color": "green", "value": 30}
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "(1 - (sum(rate(ig_wva_requests_total{backend_vendor=\"amd\"}[5m])) * 0.6 + sum(rate(ig_wva_requests_total{backend_vendor=\"nvidia\"}[5m])) * 2.0) / (sum(rate(ig_wva_requests_total[5m])) * 2.0)) * 100",
+            "legendFormat": "Cost Savings %",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "P95 Latency by Vendor",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right"},
+          "tooltip": {"mode": "multi"}
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 10
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(ig_wva_request_duration_seconds_bucket[5m])) by (le, backend_vendor)) * 1000",
+            "legendFormat": "P95 - {{ backend_vendor }}",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(ig_wva_request_duration_seconds_bucket[5m])) by (le, backend_vendor)) * 1000",
+            "legendFormat": "P99 - {{ backend_vendor }}",
+            "refId": "B"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "GPU Utilization",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "options": {
+          "orientation": "horizontal",
+          "displayMode": "gradient",
+          "showUnfilled": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 70},
+                {"color": "red", "value": 90}
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "avg(nvidia_smi_utilization_gpu_ratio * 100) by (node)",
+            "legendFormat": "NVIDIA - {{ node }}",
+            "refId": "A"
+          },
+          {
+            "expr": "avg(rocm_smi_utilization_gpu_ratio * 100) by (node)",
+            "legendFormat": "AMD - {{ node }}",
+            "refId": "B"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Throughput (Requests/sec)",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right"},
+          "tooltip": {"mode": "multi"}
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(ig_wva_requests_total[5m])) by (backend_vendor)",
+            "legendFormat": "{{ backend_vendor }}",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Queue Length by Pool",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right"},
+          "tooltip": {"mode": "multi"}
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "avg(vllm_queue_length) by (inference_pool)",
+            "legendFormat": "{{ inference_pool }}",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "SLA Compliance Rate",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "text": {"titleSize": 18, "valueSize": 36},
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 95,
+            "max": 100,
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 95},
+                {"color": "yellow", "value": 98},
+                {"color": "green", "value": 99}
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "(1 - sum(rate(ig_wva_sla_violations_total[5m])) / sum(rate(ig_wva_requests_total[5m]))) * 100",
+            "legendFormat": "SLA Compliance",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Memory Usage by Vendor",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right"},
+          "tooltip": {"mode": "multi"}
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 10
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "avg(nvidia_smi_memory_used_bytes) by (node)",
+            "legendFormat": "NVIDIA Memory - {{ node }}",
+            "refId": "A"
+          },
+          {
+            "expr": "avg(rocm_smi_memory_used_bytes) by (node)",
+            "legendFormat": "AMD Memory - {{ node }}",
+            "refId": "B"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Routing Decisions",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+        "options": {
+          "showHeader": true,
+          "sortBy": [{"desc": true, "displayName": "Rate"}]
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {"align": "left", "displayMode": "auto"}
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Rate"},
+              "properties": [
+                {"id": "unit", "value": "reqps"},
+                {"id": "custom.displayMode", "value": "color-background"}
+              ]
+            }
+          ]
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(ig_wva_routing_decisions_total[5m])) by (route_reason, backend_vendor)",
+            "legendFormat": "",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Error Rate by Vendor",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right"},
+          "tooltip": {"mode": "multi"}
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(ig_wva_requests_total{status=~\"5..\"}[5m])) by (backend_vendor) / sum(rate(ig_wva_requests_total[5m])) by (backend_vendor) * 100",
+            "legendFormat": "{{ backend_vendor }} Error Rate",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Cache Hit Rate",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 48},
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "text": {"titleSize": 14, "valueSize": 24},
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 30},
+                {"color": "green", "value": 60}
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(ig_wva_cache_hits_total[5m])) / sum(rate(ig_wva_cache_requests_total[5m])) * 100",
+            "legendFormat": "Cache Hit Rate",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Active Connections",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 48},
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "text": {"titleSize": 14, "valueSize": 24},
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 100},
+                {"color": "red", "value": 200}
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(ig_wva_active_connections)",
+            "legendFormat": "Active Connections",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 13,
+        "title": "Pod Scaling Events",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 48},
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "text": {"titleSize": 14, "valueSize": 24},
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "palette-classic"}
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(kube_hpa_status_current_replicas[1h])) by (horizontalpodautoscaler)",
+            "legendFormat": "{{ horizontalpodautoscaler }}",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 14,
+        "title": "Network I/O",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 48},
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "text": {"titleSize": 14, "valueSize": 24},
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "Bps",
+            "color": {"mode": "palette-classic"}
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(container_network_receive_bytes_total{namespace=\"llm-d-multi-vendor\"}[5m]))",
+            "legendFormat": "Network RX",
+            "refId": "A"
+          }
+        ]
+      }
+    ],
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(kube_deployment_status_replicas{namespace=\"llm-d-multi-vendor\"}[5m]) > 0",
+          "iconColor": "blue",
+          "titleFormat": "Deployment Scale Event"
+        },
+        {
+          "name": "SLA Violations",
+          "datasource": "Prometheus", 
+          "enable": true,
+          "expr": "increase(ig_wva_sla_violations_total[1m]) > 0",
+          "iconColor": "red",
+          "titleFormat": "SLA Violation Detected"
+        }
+      ]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "vendor",
+          "type": "query",
+          "query": "label_values(ig_wva_requests_total, backend_vendor)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true
+        },
+        {
+          "name": "scenario",
+          "type": "custom",
+          "options": [
+            {"text": "All", "value": "$__all", "selected": true},
+            {"text": "Cost Optimization", "value": "cost-optimization"},
+            {"text": "High Performance", "value": "high-performance"},
+            {"text": "Balanced", "value": "balanced"}
+          ],
+          "includeAll": true,
+          "multi": true
+        }
+      ]
+    },
+    "links": [
+      {
+        "title": "Multi-Vendor Setup Guide",
+        "url": "https://github.com/llm-d-incubation/ig-wva/tree/main/examples/multi-vendor-routing",
+        "type": "link",
+        "icon": "doc"
+      },
+      {
+        "title": "Troubleshooting Guide", 
+        "url": "https://llm-d.ai/docs/troubleshooting/multi-vendor",
+        "type": "link",
+        "icon": "question"
+      }
+    ]
+  }
+}

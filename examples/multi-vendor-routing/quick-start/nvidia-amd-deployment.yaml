@@ -1,0 +1,643 @@
+# Multi-Vendor Reference Architecture: NVIDIA + AMD Deployment
+# This configuration demonstrates intelligent routing between NVIDIA H100 and AMD MI300X
+# for cost optimization and performance flexibility.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-d-multi-vendor
+  labels:
+    app.kubernetes.io/name: llm-d
+    app.kubernetes.io/component: multi-vendor-routing
+    app.kubernetes.io/version: "v1.0.0"
+
+---
+# NVIDIA H100 Inference Pool - High Performance Tier
+apiVersion: llm-d.ai/v1alpha1
+kind: InferencePool
+metadata:
+  name: nvidia-h100-pool
+  namespace: llm-d-multi-vendor
+  labels:
+    vendor: nvidia
+    gpu-model: h100
+    tier: high-performance
+spec:
+  # Pool configuration
+  replicas: 3
+  minReplicas: 1
+  maxReplicas: 8
+  
+  # Hardware selection
+  nodeSelector:
+    accelerator: nvidia-h100
+    tier: premium
+  
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+  - key: premium-tier
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
+  
+  # Container specification
+  template:
+    metadata:
+      labels:
+        vendor: nvidia
+        gpu-model: h100
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: vllm-server
+        image: vllm/vllm-openai:v0.6.2-cuda
+        imagePullPolicy: IfNotPresent
+        
+        command:
+        - python
+        - -m
+        - vllm.entrypoints.openai.api_server
+        
+        args:
+        - --host=0.0.0.0
+        - --port=8000
+        - --model=meta-llama/Llama-2-70b-chat-hf
+        - --tensor-parallel-size=1
+        - --gpu-memory-utilization=0.9
+        - --max-model-len=4096
+        - --served-model-name=llama-70b-chat
+        - --trust-remote-code
+        - --disable-log-requests
+        
+        env:
+        # NVIDIA CUDA optimizations
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: VLLM_USE_TRITON_FLASH_ATTN
+          value: "1"  # Enable Triton for H100
+        - name: VLLM_ATTENTION_BACKEND
+          value: "FLASH_ATTN"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "max_split_size_mb:512"
+        
+        # Model caching
+        - name: HF_HOME
+          value: "/app/models"
+        - name: TRANSFORMERS_CACHE
+          value: "/app/models/transformers"
+        
+        # Performance optimizations
+        - name: TOKENIZERS_PARALLELISM
+          value: "false"
+        - name: VLLM_WORKER_MULTIPROC_METHOD
+          value: "spawn"
+        
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        - name: metrics
+          containerPort: 8001
+          protocol: TCP
+        
+        resources:
+          requests:
+            nvidia.com/gpu: 1
+            memory: 40Gi
+            cpu: 8
+          limits:
+            nvidia.com/gpu: 1
+            memory: 80Gi
+            cpu: 16
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 90
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 40  # 10 minutes max startup time
+        
+        volumeMounts:
+        - name: model-cache
+          mountPath: /app/models
+        - name: shm
+          mountPath: /dev/shm
+      
+      volumes:
+      - name: model-cache
+        emptyDir:
+          sizeLimit: 100Gi
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 8Gi
+      
+      # Security and resource management
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      terminationGracePeriodSeconds: 60
+
+---
+# AMD MI300X Inference Pool - Cost-Optimized Tier
+apiVersion: llm-d.ai/v1alpha1
+kind: InferencePool
+metadata:
+  name: amd-mi300x-pool
+  namespace: llm-d-multi-vendor
+  labels:
+    vendor: amd
+    gpu-model: mi300x
+    tier: cost-optimized
+spec:
+  # Pool configuration
+  replicas: 4
+  minReplicas: 2
+  maxReplicas: 12
+  
+  # Hardware selection
+  nodeSelector:
+    accelerator: amd-mi300x
+    tier: standard
+  
+  tolerations:
+  - key: amd.com/gpu
+    operator: Exists
+    effect: NoSchedule
+  - key: standard-tier
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
+  
+  # Container specification
+  template:
+    metadata:
+      labels:
+        vendor: amd
+        gpu-model: mi300x
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: vllm-server
+        image: vllm/vllm-openai:v0.6.2-rocm
+        imagePullPolicy: IfNotPresent
+        
+        command:
+        - python
+        - -m 
+        - vllm.entrypoints.openai.api_server
+        
+        args:
+        - --host=0.0.0.0
+        - --port=8000
+        - --model=meta-llama/Llama-2-7b-chat-hf  # Smaller model for cost optimization
+        - --tensor-parallel-size=1
+        - --gpu-memory-utilization=0.85  # Conservative for stability
+        - --max-model-len=4096
+        - --served-model-name=llama-7b-chat
+        - --trust-remote-code
+        - --disable-log-requests
+        
+        env:
+        # AMD ROCm optimizations
+        - name: ROCR_VISIBLE_DEVICES
+          value: "0"
+        - name: VLLM_USE_TRITON_FLASH_ATTN
+          value: "0"  # Disable Triton for ROCm compatibility
+        - name: VLLM_ATTENTION_BACKEND
+          value: "FLASH_ATTN"
+        - name: HIP_VISIBLE_DEVICES
+          value: "0"
+        
+        # ROCm memory management
+        - name: HSA_OVERRIDE_GFX_VERSION
+          value: "9.0.0"  # MI300X compatibility
+        - name: PYTORCH_HIP_ALLOC_CONF
+          value: "max_split_size_mb:512"
+        
+        # Model caching
+        - name: HF_HOME
+          value: "/app/models"
+        - name: TRANSFORMERS_CACHE
+          value: "/app/models/transformers"
+        
+        # Performance optimizations
+        - name: TOKENIZERS_PARALLELISM
+          value: "false"
+        - name: VLLM_WORKER_MULTIPROC_METHOD
+          value: "spawn"
+        
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        - name: metrics
+          containerPort: 8001
+          protocol: TCP
+        
+        resources:
+          requests:
+            amd.com/gpu: 1
+            memory: 32Gi
+            cpu: 6
+          limits:
+            amd.com/gpu: 1
+            memory: 64Gi
+            cpu: 12
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 150  # AMD may need longer startup
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 120
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 20
+          timeoutSeconds: 15
+          failureThreshold: 50  # 16+ minutes for ROCm initialization
+        
+        volumeMounts:
+        - name: model-cache
+          mountPath: /app/models
+        - name: shm
+          mountPath: /dev/shm
+      
+      volumes:
+      - name: model-cache
+        emptyDir:
+          sizeLimit: 80Gi
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 4Gi
+      
+      # Security and resource management
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      terminationGracePeriodSeconds: 90  # Longer for ROCm cleanup
+
+---
+# Inference Gateway for Multi-Vendor Routing
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: multi-vendor-gateway
+  namespace: llm-d-multi-vendor
+  labels:
+    app.kubernetes.io/name: llm-d
+    app.kubernetes.io/component: gateway
+spec:
+  gatewayClassName: inference-gateway-class
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same
+
+---
+# Multi-Vendor Intelligent Routing
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: multi-vendor-routing
+  namespace: llm-d-multi-vendor
+  labels:
+    app.kubernetes.io/name: llm-d
+    app.kubernetes.io/component: routing
+  annotations:
+    # Routing strategy configuration
+    llm-d.ai/routing-strategy: "intelligent"
+    llm-d.ai/cache-awareness: "enabled"
+    llm-d.ai/cost-optimization: "enabled"
+    llm-d.ai/sla-enforcement: "strict"
+spec:
+  parentRefs:  
+  - name: multi-vendor-gateway
+  
+  rules:
+  # High-priority requests → NVIDIA H100 (Performance-first)
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-priority"
+        value: "high"
+    - headers:
+      - type: Exact  
+        name: "x-sla-target"
+        value: "p99-200ms"
+    backendRefs:
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 85  # Primary routing to NVIDIA
+    - name: amd-mi300x-pool  
+      port: 8000
+      weight: 15  # Fallback to AMD
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Target"
+          value: "high-performance"
+        - name: "X-Backend-Preference" 
+          value: "nvidia"
+  
+  # Standard requests → AMD MI300X (Cost-optimized)
+  - matches:
+    - headers:
+      - type: Exact
+        name: "x-cost-tier"
+        value: "standard"
+    - headers:
+      - type: Exact
+        name: "x-sla-target" 
+        value: "p95-500ms"
+    backendRefs:
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 75  # Primary routing to AMD
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 25  # Overflow to NVIDIA
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Target"
+          value: "cost-optimized"
+        - name: "X-Backend-Preference"
+          value: "amd"
+  
+  # Default routing (balanced approach)
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /v1/
+    backendRefs:
+    - name: amd-mi300x-pool
+      port: 8000
+      weight: 60  # Prefer cost-effective AMD
+    - name: nvidia-h100-pool
+      port: 8000
+      weight: 40  # Balance with high-performance NVIDIA
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: "X-Route-Target"
+          value: "balanced"
+        - name: "X-Backend-Mix"
+          value: "amd-nvidia"
+
+---
+# Service for NVIDIA Pool
+apiVersion: v1
+kind: Service
+metadata:
+  name: nvidia-h100-pool
+  namespace: llm-d-multi-vendor
+  labels:
+    vendor: nvidia
+    gpu-model: h100
+    app.kubernetes.io/component: inference-pool
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  - name: metrics
+    port: 8001
+    targetPort: 8001
+    protocol: TCP
+  selector:
+    vendor: nvidia
+    gpu-model: h100
+
+---
+# Service for AMD Pool
+apiVersion: v1
+kind: Service
+metadata:
+  name: amd-mi300x-pool
+  namespace: llm-d-multi-vendor
+  labels:
+    vendor: amd
+    gpu-model: mi300x
+    app.kubernetes.io/component: inference-pool
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  - name: metrics
+    port: 8001
+    targetPort: 8001
+    protocol: TCP
+  selector:
+    vendor: amd
+    gpu-model: mi300x
+
+---
+# Horizontal Pod Autoscaler for NVIDIA Pool
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nvidia-h100-hpa
+  namespace: llm-d-multi-vendor
+spec:
+  scaleTargetRef:
+    apiVersion: llm-d.ai/v1alpha1
+    kind: InferencePool
+    name: nvidia-h100-pool
+  minReplicas: 1
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization  
+        averageUtilization: 75
+  - type: Pods
+    pods:
+      metric:
+        name: vllm_queue_length
+      target:
+        type: AverageValue
+        averageValue: "5"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+
+---
+# Horizontal Pod Autoscaler for AMD Pool  
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: amd-mi300x-hpa
+  namespace: llm-d-multi-vendor
+spec:
+  scaleTargetRef:
+    apiVersion: llm-d.ai/v1alpha1
+    kind: InferencePool
+    name: amd-mi300x-pool
+  minReplicas: 2
+  maxReplicas: 12
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 65
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Pods
+    pods:
+      metric:
+        name: vllm_queue_length
+      target:
+        type: AverageValue
+        averageValue: "8"  # Allow higher queue for cost optimization
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 90  # Slower scaling for cost control
+      policies:
+      - type: Percent
+        value: 40
+        periodSeconds: 90
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 20
+        periodSeconds: 90
+
+---
+# Network Policy for Secure Multi-Vendor Communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: multi-vendor-network-policy
+  namespace: llm-d-multi-vendor
+spec:
+  podSelector: {}  # Apply to all pods in namespace
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from inference gateway
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: inference-gateway-system
+    ports:
+    - protocol: TCP
+      port: 8000
+    - protocol: TCP
+      port: 8001
+  # Allow internal communication between pools
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: inference-pool
+    ports:
+    - protocol: TCP
+      port: 8000
+    - protocol: TCP  
+      port: 8001
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow HTTPS for model downloads
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow internal communication
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 8000
+    - protocol: TCP
+      port: 8001
